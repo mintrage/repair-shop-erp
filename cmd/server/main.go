@@ -16,36 +16,62 @@ type application struct {
 	db *sql.DB
 }
 
-type PartInput struct {
+type Part struct {
+	ID       int     `json:"id"`
 	Name     string  `json:"name"`
 	Quantity int     `json:"quantity"`
 	Price    float64 `json:"price"`
 }
 
-func (app *application) createPartHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
+func (app *application) partsHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+
+	case http.MethodGet:
+		rows, err := app.db.Query("SELECT id, name, quantity, price FROM parts")
+		if err != nil {
+			http.Error(w, "Failed to get parts", http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+		parts := []Part{}
+		for rows.Next() {
+			var p Part
+			if err := rows.Scan(&p.ID, &p.Name, &p.Quantity, &p.Price); err != nil {
+				http.Error(w, "Failed to parse part", http.StatusInternalServerError)
+				return
+			}
+			parts = append(parts, p)
+		}
+		if err = rows.Err(); err != nil {
+			http.Error(w, "Failed to parse parts", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(parts)
+
+	case http.MethodPost:
+		var input Part
+		err := json.NewDecoder(r.Body).Decode(&input)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		query := `INSERT INTO parts (name, quantity, price) VALUES ($1, $2, $3) RETURNING id`
+		var newID int
+		err = app.db.QueryRow(query, input.Name, input.Quantity, input.Price).Scan(&newID)
+		if err != nil {
+			http.Error(w, "Failed to insert into database", http.StatusInternalServerError)
+			log.Printf("DB error: %v", err)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		fmt.Fprintf(w, "Created part with ID: %d", newID)
+
+	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	var input PartInput
-	err := json.NewDecoder(r.Body).Decode(&input)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	query := `INSERT INTO parts (name, quantity, price) VALUES ($1, $2, $3) RETURNING id`
-
-	var newID int
-	err = app.db.QueryRow(query, input.Name, input.Quantity, input.Price).Scan(&newID)
-	if err != nil {
-		http.Error(w, "Failed to insert into database", http.StatusInternalServerError)
-		log.Printf("DB error: %v", err)
-		return
-	}
-
-	w.WriteHeader(http.StatusCreated)
-	fmt.Fprintf(w, "Created part with ID: %d", newID)
 }
 
 func main() {
@@ -81,7 +107,7 @@ func main() {
 		db: db,
 	}
 
-	http.HandleFunc("/parts", app.createPartHandler)
+	http.HandleFunc("/parts", app.partsHandler)
 
 	err = http.ListenAndServe(":8080", nil)
 	if err != nil {
