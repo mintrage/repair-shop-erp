@@ -23,6 +23,46 @@ type Part struct {
 	Price    float64 `json:"price"`
 }
 
+type Order struct {
+	ID                 int       `json:"id"`
+	ClientName         string    `json:"client_name"`
+	PhoneNumber        string    `json:"phone_number"`
+	DeviceModel        string    `json:"device_model"`
+	ProblemDescription string    `json:"problem_description"`
+	Status             string    `json:"status"`
+	CreationDate       time.Time `json:"creation_date"`
+}
+
+func (app *application) ordersHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var input Order
+	err := json.NewDecoder(r.Body).Decode(&input)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	query := `
+	INSERT INTO orders (client_name, phone_number, device_model, problem_description, status) 
+	VALUES ($1, $2, $3, $4, $5) 
+	RETURNING id
+	`
+	var newID int
+	if input.Status == "" {
+		input.Status = "Принят"
+	}
+	err = app.db.QueryRow(query, input.ClientName, input.PhoneNumber, input.DeviceModel, input.ProblemDescription, input.Status).Scan(&newID)
+	if err != nil {
+		http.Error(w, "Failed to insert into database", http.StatusInternalServerError)
+		log.Printf("DB error: %v", err)
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
+	fmt.Fprintf(w, "Created order with ID: %d", newID)
+}
+
 func (app *application) partsHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 
@@ -108,6 +148,7 @@ func main() {
 	}
 
 	http.HandleFunc("/parts", app.partsHandler)
+	http.HandleFunc("/orders", app.ordersHandler)
 
 	err = http.ListenAndServe(":8080", nil)
 	if err != nil {
